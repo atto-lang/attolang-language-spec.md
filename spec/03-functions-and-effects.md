@@ -90,7 +90,58 @@ val normalized = raw
   |> validate
 ```
 
-`|>` passes the previous value through a functional transformation. The target actor pipeline spelling is:
+`|>` passes the previous value through a functional transformation.
+
+### Value-match stages
+
+The proposed source contract admits subject-elided value matches as forward
+functional stages, with either delimiter style. The result type can be explicit
+or inferred, just as in a standalone value match.
+
+```atto
+return result
+    |> match<int> over
+        on Ok(value) -> value,
+        on Err(error) -> 42,
+    end |> increment;
+```
+
+```atto
+return result
+    |> match over {
+        on Ok(value) -> value,
+        on Err(error) -> 42,
+    } |> increment;
+```
+
+For either spelling, `E |> match<T> over ARMS end` (or the brace-delimited
+equivalent) is equivalent to `match<T> E over ARMS end`. The preceding expression
+is evaluated exactly once, and the selected arm result feeds the next stage.
+An explicit second subject is invalid. A standalone match still requires its
+own subject. Multiple match stages may compose left-to-right.
+
+The match has the same type inference, exhaustiveness, ordering, pattern-binding
+scope, ownership, effects and cleanup semantics as the corresponding standalone
+match. The pipeline introduces no implicit copy, borrow, suspension, closure,
+or allocation. Both outer delimiter styles admit expression and block arms;
+commas between arms and one optional trailing comma are supported. Preserve
+existing standalone match separator compatibility. Block-arm returns target the
+match result, not the enclosing callable; cleanup completes before the next
+stage runs. Nested or early arm-local returns require verified control-flow
+and ownership joins: a backend lacking those proofs must reject them rather
+than reinterpret them as callable returns.
+
+The formatter preserves the selected outer delimiters and whether the subject
+is supplied by the pipeline. This is a source contract proposal, not evidence
+of compiler parity. Each backend must independently demonstrate equivalent
+typed lowering, positive execution of both Result variants and both delimiters,
+continuation after the closing delimiter, one evaluation of effectful subjects,
+and negative missing-subject, duplicate-subject, nonexhaustive, ill-typed and
+invalid delimiter cases. Unsupported backend subsets must fail closed.
+
+### Actor pipelines
+
+The target actor pipeline spelling is:
 
 ```atto
 val graph = spawn Reader() pipe spawn Transformer() pipe spawn Writer()
