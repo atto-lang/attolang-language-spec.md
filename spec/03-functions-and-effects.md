@@ -139,6 +139,36 @@ continuation after the closing delimiter, one evaluation of effectful subjects,
 and negative missing-subject, duplicate-subject, nonexhaustive, ill-typed and
 invalid delimiter cases. Unsupported backend subsets must fail closed.
 
+### Unary await stage
+
+```atto
+const f2 = 42 |> await;
+const f3 = 42 |> await |> identity;
+val answer = fetch_data() |> await |> transform;
+```
+
+The proposed bare stage `E |> await` is equivalent to ordinary prefix
+`await E`. It takes only the immediately preceding expression, evaluates
+it once, and exposes its result to the next stage. It is not a callable
+factory: `|> await()`, `|> await(other)` and `|> await<T>` are invalid.
+
+For `Future<T>` it awaits one layer and returns `T`. Existing
+`HasFuture<T>` projection and actor readiness rules are unchanged. For
+a statically proven immediate `int`, both prefix and pipeline forms
+return the original integer without creating a Future, suspending, or
+changing ownership. The first admission slice is intentionally limited
+to `int`; additional immediate types require a static ownership/effect
+classification rather than a dynamic catch-all. In particular, do not
+silently accept Result, Option, unknown generic, resource or affine
+operands as immediate values. Existing `std.await` remains a strict
+Future-only adapter. The scalar case may retain conservative suspension
+restrictions until the effect/loan analysis can prove it non-suspending.
+
+No implicit lifting of arbitrary stages or recursive flattening is
+introduced by the bare operator. Rejection and error propagation must
+be the same as prefix await; a backend that cannot provide the effect
+semantics rejects before code generation.
+
 ### Actor pipelines
 
 The target actor pipeline spelling is:
