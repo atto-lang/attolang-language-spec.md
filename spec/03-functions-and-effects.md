@@ -217,6 +217,48 @@ bindings, compound subject-elided predicates, casts, switch and negation
 receivers require explicit grammar and backend admission; this proposal
 does not claim those are implemented.
 
+### Directional binding and trapped callable receivers (proposed)
+
+A completed value pipeline may initialize a new lexical binding in
+either direction:
+
+```atto
+42 |> if > 10 then 30 else 20 fi >> const int x;
+const int y << 42 |> if > 10 then 30 else 20 fi;
+```
+
+For a proven ordinary scalar source, these are equivalent to a normal
+declaration initializer, with the same constant-expression, type,
+ownership and initialization checks. The source is evaluated once.
+The declaration is a statement, not another value stage. Existing
+channel-read declarations retain their channel-read meaning for
+statically known channel sources; a runtime channel read cannot
+initialize a compile-time constant. Unknown, ambiguous or unsupported
+source types must reject rather than guess whether to read or bind.
+This proposal does not redefine ordinary channel writes or triple
+angle shift operators.
+
+A bare `|> trap!` is not a value receiver. A trap must protect a callable
+invocation, not retroactively wrap an already evaluated scalar or
+already completed call. Candidate spelling for a trapped pipeline call:
+
+```atto
+42 |> trap! divide(0) >> val result;
+```
+
+The preceding pipeline expression completes before the trapped call.
+The callable receives that value as its first argument. The protected
+invocation produces its ordinary checked Result (or other explicitly
+specified trap result), not the unwrapped success payload. Upstream
+failures are outside this boundary. A bare trap stage, an arbitrary
+non-call operand, and an unsupported asynchronous trap must reject.
+
+Do not introduce `ref!` as a raw-pointer receiver or silently treat it
+as an identity conversion. Checked ownership/borrow operators require
+their own lifetime and result-type admission; borrowing a temporary
+or trap result must not create a dangling loan. No new ownership
+operation is authorized by this grammar proposal.
+
 ### Actor pipelines
 
 The target actor pipeline spelling is:
