@@ -169,6 +169,54 @@ introduced by the bare operator. Rejection and error propagation must
 be the same as prefix await; a backend that cannot provide the effect
 semantics rejects before code generation.
 
+### Conditional and predicate receivers
+
+The proposed first receiver grammar also admits the following equivalent
+value-producing conditionals:
+
+```atto
+const int a = 42 |> if is int then 30 else 20 fi;
+const int b = 42 |> is type int ? 30 : 20;
+const int c = 42 |> > 10 ? 30 : 20;
+const int d = true |> ? 30 : 20;
+const int e = true |> if then 30 else 20 fi;
+```
+
+Each produces 30. In receiver position only, `is T` is shorthand for
+`is type T`. The initial receiver predicate subset contains a single
+comparison (ordered comparisons or equality/inequality), or a type test
+with a type atom. A boolean receiver needs no predicate suffix. The
+`ifnot` and `unless` variants invert the checked predicate, as usual.
+
+The input is evaluated once before the test, even when the test is
+statically known. The predicate must be bool, not truthiness. Only the
+selected arm executes, and arm result types and ownership joins follow
+the standalone conditional contract. A backend must not erase a
+potentially effectful input, eagerly evaluate both branches, or infer
+a runtime type test for an unsupported nominal representation.
+
+`fi` closes a conditional stage. For the unbraced ternary, the next
+top-level `|>` after the false arm continues the outer pipeline; group
+a nested pipeline explicitly. The question mark immediately after a
+receiver type atom is the ternary delimiter, not a postfix Option type
+suffix. Parenthesize a compound type when supported. An explicit second
+receiver, missing else arm, non-bool predicate, or incompatible result
+types must reject before executable emission.
+
+```atto
+const int result = 42
+    |> await
+    |> if > 10 then 30 else 20 fi
+    |> increment
+    |> > 30
+    |> ? 100 : 200;
+```
+
+With `increment(n) = n + 1`, this produces 100. Additional predicate
+bindings, compound subject-elided predicates, casts, switch and negation
+receivers require explicit grammar and backend admission; this proposal
+does not claim those are implemented.
+
 ### Actor pipelines
 
 The target actor pipeline spelling is:
