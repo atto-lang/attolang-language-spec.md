@@ -90,7 +90,178 @@ val normalized = raw
   |> validate
 ```
 
-`|>` passes the previous value through a functional transformation. The target actor pipeline spelling is:
+`|>` passes the previous value through a functional transformation.
+
+### Value-match stages
+
+The proposed source contract admits subject-elided value matches as forward
+functional stages, with either delimiter style. The result type can be explicit
+or inferred, just as in a standalone value match.
+
+```atto
+return result
+    |> match<int> over
+        on Ok(value) -> value,
+        on Err(error) -> 42,
+    end |> increment;
+```
+
+```atto
+return result
+    |> match over {
+        on Ok(value) -> value,
+        on Err(error) -> 42,
+    } |> increment;
+```
+
+For either spelling, `E |> match<T> over ARMS end` (or the brace-delimited
+equivalent) is equivalent to `match<T> E over ARMS end`. The preceding expression
+is evaluated exactly once, and the selected arm result feeds the next stage.
+An explicit second subject is invalid. A standalone match still requires its
+own subject. Multiple match stages may compose left-to-right.
+
+The match has the same type inference, exhaustiveness, ordering, pattern-binding
+scope, ownership, effects and cleanup semantics as the corresponding standalone
+match. The pipeline introduces no implicit copy, borrow, suspension, closure,
+or allocation. Both outer delimiter styles admit expression and block arms;
+commas between arms and one optional trailing comma are supported. Preserve
+existing standalone match separator compatibility. Block-arm returns target the
+match result, not the enclosing callable; cleanup completes before the next
+stage runs. Nested or early arm-local returns require verified control-flow
+and ownership joins: a backend lacking those proofs must reject them rather
+than reinterpret them as callable returns.
+
+The formatter preserves the selected outer delimiters and whether the subject
+is supplied by the pipeline. This is a source contract proposal, not evidence
+of compiler parity. Each backend must independently demonstrate equivalent
+typed lowering, positive execution of both Result variants and both delimiters,
+continuation after the closing delimiter, one evaluation of effectful subjects,
+and negative missing-subject, duplicate-subject, nonexhaustive, ill-typed and
+invalid delimiter cases. Unsupported backend subsets must fail closed.
+
+### Unary await stage
+
+```atto
+const f2 = 42 |> await;
+const f3 = 42 |> await |> identity;
+val answer = fetch_data() |> await |> transform;
+```
+
+The proposed bare stage `E |> await` is equivalent to ordinary prefix
+`await E`. It takes only the immediately preceding expression, evaluates
+it once, and exposes its result to the next stage. It is not a callable
+factory: `|> await()`, `|> await(other)` and `|> await<T>` are invalid.
+
+For `Future<T>` it awaits one layer and returns `T`. Existing
+`HasFuture<T>` projection and actor readiness rules are unchanged. For
+a statically proven immediate `int`, both prefix and pipeline forms
+return the original integer without creating a Future, suspending, or
+changing ownership. The first admission slice is intentionally limited
+to `int`; additional immediate types require a static ownership/effect
+classification rather than a dynamic catch-all. In particular, do not
+silently accept Result, Option, unknown generic, resource or affine
+operands as immediate values. Existing `std.await` remains a strict
+Future-only adapter. The scalar case may retain conservative suspension
+restrictions until the effect/loan analysis can prove it non-suspending.
+
+No implicit lifting of arbitrary stages or recursive flattening is
+introduced by the bare operator. Rejection and error propagation must
+be the same as prefix await; a backend that cannot provide the effect
+semantics rejects before code generation.
+
+### Conditional and predicate receivers
+
+The proposed first receiver grammar also admits the following equivalent
+value-producing conditionals:
+
+```atto
+const int a = 42 |> if is int then 30 else 20 fi;
+const int b = 42 |> is type int ? 30 : 20;
+const int c = 42 |> > 10 ? 30 : 20;
+const int d = true |> ? 30 : 20;
+const int e = true |> if then 30 else 20 fi;
+```
+
+Each produces 30. In receiver position only, `is T` is shorthand for
+`is type T`. The initial receiver predicate subset contains a single
+comparison (ordered comparisons or equality/inequality), or a type test
+with a type atom. A boolean receiver needs no predicate suffix. The
+`ifnot` and `unless` variants invert the checked predicate, as usual.
+
+The input is evaluated once before the test, even when the test is
+statically known. The predicate must be bool, not truthiness. Only the
+selected arm executes, and arm result types and ownership joins follow
+the standalone conditional contract. A backend must not erase a
+potentially effectful input, eagerly evaluate both branches, or infer
+a runtime type test for an unsupported nominal representation.
+
+`fi` closes a conditional stage. For the unbraced ternary, the next
+top-level `|>` after the false arm continues the outer pipeline; group
+a nested pipeline explicitly. The question mark immediately after a
+receiver type atom is the ternary delimiter, not a postfix Option type
+suffix. Parenthesize a compound type when supported. An explicit second
+receiver, missing else arm, non-bool predicate, or incompatible result
+types must reject before executable emission.
+
+```atto
+const int result = 42
+    |> await
+    |> if > 10 then 30 else 20 fi
+    |> increment
+    |> > 30
+    |> ? 100 : 200;
+```
+
+With `increment(n) = n + 1`, this produces 100. Additional predicate
+bindings, compound subject-elided predicates, casts, switch and negation
+receivers require explicit grammar and backend admission; this proposal
+does not claim those are implemented.
+
+### Directional binding and trapped callable receivers (proposed)
+
+A completed value pipeline may initialize a new lexical binding in
+either direction:
+
+```atto
+42 |> if > 10 then 30 else 20 fi >> const int x;
+const int y << 42 |> if > 10 then 30 else 20 fi;
+```
+
+For a proven ordinary scalar source, these are equivalent to a normal
+declaration initializer, with the same constant-expression, type,
+ownership and initialization checks. The source is evaluated once.
+The declaration is a statement, not another value stage. Existing
+channel-read declarations retain their channel-read meaning for
+statically known channel sources; a runtime channel read cannot
+initialize a compile-time constant. Unknown, ambiguous or unsupported
+source types must reject rather than guess whether to read or bind.
+This proposal does not redefine ordinary channel writes or triple
+angle shift operators.
+
+A bare `|> trap!` is not a value receiver. A trap must protect a callable
+invocation, not retroactively wrap an already evaluated scalar or
+already completed call. Candidate spelling for a trapped pipeline call:
+
+```atto
+42 |> trap! divide(0) >> val result;
+```
+
+The preceding pipeline expression completes before the trapped call.
+The callable receives that value as its first argument. The protected
+invocation produces its ordinary checked Result (or other explicitly
+specified trap result), not the unwrapped success payload. Upstream
+failures are outside this boundary. A bare trap stage, an arbitrary
+non-call operand, and an unsupported asynchronous trap must reject.
+
+Do not introduce `ref!` as a raw-pointer receiver or silently treat it
+as an identity conversion. Checked ownership/borrow operators require
+their own lifetime and result-type admission; borrowing a temporary
+or trap result must not create a dangling loan. No new ownership
+operation is authorized by this grammar proposal.
+
+### Actor pipelines
+
+The target actor pipeline spelling is:
 
 ```atto
 val graph = spawn Reader() pipe spawn Transformer() pipe spawn Writer()
